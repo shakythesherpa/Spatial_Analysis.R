@@ -4,7 +4,16 @@
 ## Date:   November 15 2013
 ## Course: GTECH 705 - Spatial Data Analysis
 ## Lab 4
+# Here's what we're going to do:
+# 1) Define neighbors (k nearest w/point data)
+# 2) Create weights matrix
+# 3) Moran’s test of observed, Moran scatterplot
+# 4) Run OLS regression
+# 5) Check residuals for spatial dependence
+# 6) Determine which SR model to use w/LM tests
+# 7) Run spatial regression model
 ##
+
 
 # Clear the workspace
 rm(list=ls())
