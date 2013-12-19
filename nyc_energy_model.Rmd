@@ -1,0 +1,189 @@
+
+Topic:  NYC Energy Model
+==========================
+Author: Shaky Sherpa
+Date:   Decomber 1 2013
+Course: GTECH 705 - Spatial Data Analysis
+Final Project 
+----------------------------------------------
+Here's the general steps i am performing:
+1. Define neighbors (k nearest w/point data)
+2. Create weights matrix
+3. Moran's test of observed, Moran scatterplot
+4. Run OLS regression
+5. Check residuals for spatial dependence
+6. Determine which SR model to use w/LM tests
+7. Run spatial regression model
+
+
+```{r}
+# Clear the workspace
+rm(list=ls())
+#load required libraries
+library(spdep)
+library(spgwr)
+library(rgdal)
+library(maptools)
+library(ggplot2)
+```
+
+# Spatial regression workflow
+```{r}
+# Load some data
+zip.shp = readOGR("data/zip_energy.shp","zip_energy")
+# reproject the data to NAD83 / New York Long Island (ftUS)
+zip <- spTransform(zip.shp, CRS("+init=epsg:2263"))
+
+# Remove missing  data and keep only complete records
+zip.data = zip[complete.cases(zip@data),]
+
+
+
+# Check what this does
+IDs = row.names(zip.data)
+```
+
+
+#Regression model
+```
+energy = elec_kwh ~ pop + medianinco + avghomeval + houseunits
+```
+#Create weight matrices
+```{r}
+# Create neighbors list
+zip.data.gal.nb = poly2nb(zip.data,snap=5280 )
+
+# Create weights matrix
+zip.data.listw = nb2listw(zip.data.gal.nb, style="W")
+```
+#plotting
+
+```{r fig.width=7, fig.height=6}
+par(mar=c(0,0,0,0))
+plot(zip.data)
+plot(zip.data.listw, coords=coordinates(zip.data), add=TRUE)
+```
+
+# Test for spatial autocorrelation
+
+```{r}
+# Moran's Test
+moran.test(zip.data$elec_kwh, listw=zip.data.listw, alternative="two.sided", zero.policy=TRUE)
+```
+
+# Test for local spatial autocorrelation
+
+```{r fig.width=7, fig.height=6}
+moran.plot(zip.data$elec_kwh, zip.data.listw, ylab="Spatially lagged Energy Consumption", xlab="Energy consumption in each zip")
+```
+
+```{r}
+zip.data.li = localmoran(zip.data$elec_kwh, zip.data.listw)
+zip.data$localm = zip.data.li[,4]
+
+```
+
+# Plot
+```{r fig.width=7, fig.height=6}
+spplot(zip.data, "localm", main="Local Moran's Ii Z-Scores")
+```
+
+# Run OLS Regression
+
+```{r}
+zip.data.lm = lm(elec_kwh ~ pop + medianinco + avghomeval + houseunits, data=zip.data)
+summary(zip.data.lm)
+```
+# Check residuals for spatial dependence
+
+```{r}
+zip.data$lmres = residuals(zip.data.lm) # Grab the residuals (though don't really need to do this)
+lm.morantest(zip.data.lm, zip.data.listw)
+```
+# Perform lagrage multiplier test
+# Robust tests used to find a proper alternative
+# Only use robust forms when BOTH LMErr and LMLag are significant
+
+```{r}
+lm.LMtests(zip.data.lm, zip.data.listw, test="all")
+```
+
+```{r}
+install.packages("lmtest")
+library(lmtest)
+bptest(zip.data.lm)
+```
+
+# Indicates errors are heteroskedastic
+# Not surprising since we have spatial dependence!
+# Fit spatial regression models
+
+# Spatial lag model(Spatial Simultaneous Autoregressive lag model estimation)
+
+```{r}
+zip.data.lag = lagsarlm(elec_kwh ~ pop + medianinco + avghomeval + houseunits, data=zip.data, listw=zip.data.listw)
+summary(zip.data.lag)
+```
+
+
+# Some more diagnostics
+```{r}
+bptest.sarlm(zip.data.lag)#Breusch-Pagan test
+```
+
+# LM test suggests there is no more spatial autocorrelation in the data
+# BP test indicates remaining heteroskedasticity in the residuals
+# Most likely due to misspecification
+# Spatial error model(Maximum likelihood estimation of spatial simultaneous autoregressive error models of the form)
+
+```{r}
+zip.data.err = errorsarlm(elec_kwh ~ pop + medianinco + avghomeval + houseunits, data=zip.data, listw=zip.data.listw)
+summary(zip.data.err)
+bptest.sarlm(zip.data.err)
+```
+#Pick the model that has lower AIC value
+#
+## GWR Model (Instead of fitting one model we account for fitting model with multiple variables)
+##
+```{r}
+zip.data.lm = lm(elec_kwh ~ pop + medianinco + avghomeval + houseunits, data=zip.data)
+zip.data$lmres = residuals(zip.data.lm) # Extract Model Residuals
+```
+
+#Crossvalidation of bandwidth for GWR
+```{r}
+#select the optimized bandwidth
+zip.data.bw = gwr.sel(elec_kwh ~ pop + medianinco + avghomeval + houseunits, data=zip.data)
+zip.data.gauss = gwr(elec_kwh ~ pop + medianinco + avghomeval + houseunits, data=zip.data, bandwidth=zip.data.bw, hatmatrix=TRUE)
+summary(zip.data.gauss)
+```
+#Plotting the variables
+```{r}
+spplot(zip.data, "elec_kwh", main="Energy consumption in 2010")
+spplot(zip.data, "energy_per", main="Energy use per person")
+spplot(zip.data, "energy_hh", main="Energy use per household")
+spplot(zip.data, "pop_densit", main="Population Density in each zipcode")
+spplot(zip.data, "medianinco", main="Median Income in each zipcode")
+spplot(zip.data, "houseunits", main="Houseunits  in each zipcode")
+spplot(zip.data, "avghomeval", main="Average home value in each zipcode")
+```
+
+#Plot the LM Residuals
+```{r fig.width=7, fig.height=6}
+spplot(zip.data, "lmres", main="Linear Model Residuals")
+```
+#Plot Gaussian 
+```{r fig.width=7, fig.height=6}
+spplot(zip.data.gauss$SDF, "energy_per", main="Energy use per person")
+```
+```{r fig.width=7, fig.height=6}
+spplot(zip.data.gauss$SDF, "energy_hh", main="Energy use per household")
+```
+```{r}
+res = zip.data.gauss$SDF
+zip.data$gwrres = zip.data$elec_kwh - res$pred
+```
+```{r fig.width=7, fig.height=6}
+spplot(zip.data, "gwrres", main="GWR Model Residuals")
+```
+
